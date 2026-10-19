@@ -123,13 +123,13 @@ curl -H "x-admin-key: YOUR_MASTER_KEY" "http://localhost:7100/v1/admin/stats"
 
 Integrate effortlessly into your backend applications:
 
-- **TypeScript / Node.js**: [`@devclouddesk/storage`](https://github.com/devclouddesk/dcd-storage-sdk)
+- **TypeScript / Node.js**: [`@dcd-sdk/storage-client`](https://github.com/devclouddesk/dcd-storage-sdk)
   ```bash
-  npm install @devclouddesk/storage
+  npm install @dcd-sdk/storage-client
   ```
-- **Python**: [`devclouddesk-storage`](https://github.com/devclouddesk/dcd-storage-sdk)
+- **Python**: [`dcd-storage-client`](https://github.com/devclouddesk/dcd-storage-sdk)
   ```bash
-  pip install devclouddesk-storage
+  pip install dcd-storage-client
   ```
 
 ---
