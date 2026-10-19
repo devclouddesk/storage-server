@@ -43,4 +43,3 @@ jobs:
           push: true
           tags: |
             devclouddesk/storage-server:latest
-            devclouddesk/storage:latest
