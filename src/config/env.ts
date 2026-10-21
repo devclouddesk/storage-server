@@ -12,7 +12,7 @@ const envSchema = z.object({
   
   // Master Admin Key (for CLI & direct administrative API access)
   MASTER_KEY: z.string().default(process.env.MASTER_KEY || process.env.ADMIN_KEY || ''),
-  KEY_PREFIX: z.string().default(process.env.KEY_PREFIX || 'sk_live_'),
+  KEY_PREFIX: z.string().default(process.env.KEY_PREFIX || 'dcd_key_live_'),
 
   // Guard rails & edge case limits
   MAX_FILE_SIZE_MB: z.coerce.number().default(50),

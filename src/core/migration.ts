@@ -15,27 +15,7 @@ export async function runLegacyDbMigration(): Promise<void> {
     const { DatabaseSync } = await import('node:sqlite');
     const db = new DatabaseSync(paths.databaseFile);
 
-    // 1. Migrate API Keys to keys.json
-    try {
-      const keys = db.prepare('SELECT * FROM api_keys').all() as any[];
-      if (Array.isArray(keys) && keys.length > 0) {
-        for (const k of keys) {
-          const existing = keysStore.listApiKeys().find((existingK) => existingK.id === k.id);
-          if (!existing) {
-            keysStore.importKey({
-              id: k.id,
-              keyHash: k.key_hash,
-              keyPrefix: k.key_prefix,
-              type: k.type,
-              name: k.name,
-              rateLimit: k.rate_limit || 120,
-              createdAt: k.created_at || Math.floor(Date.now() / 1000),
-            });
-          }
-        }
-        console.log(`[Migration] Migrated ${keys.length} API keys to DB-less keys.json`);
-      }
-    } catch {}
+    // Legacy SQLite DB Migration: only migrate file metadata, let KeysStore manage the single clean default key
 
     // 2. Migrate Media Files metadata to sidecar .meta.json files
     try {

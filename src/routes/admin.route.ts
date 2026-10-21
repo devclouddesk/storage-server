@@ -85,10 +85,27 @@ export async function adminRoutes(fastify: FastifyInstance) {
 
     const { files, total } = await filesStore.listMediaFiles(limit, offset, query.folder);
 
+    const protocol = request.protocol;
+    const host = request.headers.host;
+    const baseUrl = `${protocol}://${host}`;
+
+    const enrichedFiles = files.map((f) => {
+      const ext = f.format ? `.${f.format}` : '';
+      const directUrl = `${baseUrl}/v1/image/${f.publicId}${ext}`;
+      return {
+        ...f,
+        public_id: f.publicId,
+        resource_type: f.resourceType,
+        url: directUrl,
+        secure_url: directUrl,
+        secureUrl: directUrl,
+      };
+    });
+
     return {
       success: true,
       data: {
-        files,
+        files: enrichedFiles,
         pagination: {
           page,
           limit,

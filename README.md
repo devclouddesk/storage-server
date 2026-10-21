@@ -157,6 +157,15 @@ Check out **[DevCloudDesk](https://devclouddesk.com)** — the all-in-one cloud 
 
 ---
 
+## 🤝 Contributing & Community
+
+We warmly welcome contributions! Please see our:
+- [Contributing Guide](CONTRIBUTING.md) for local setup and testing procedures.
+- [Code of Conduct](CODE_OF_CONDUCT.md) for community guidelines.
+- [Security Policy](SECURITY.md) to report vulnerabilities.
+
+---
+
 ## 📄 License
 
 This project is open-source software licensed under the **[MIT License](LICENSE)**.

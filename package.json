@@ -3,16 +3,25 @@
   "version": "1.0.0",
   "description": "High-performance self-hosted storage & media transformation engine",
   "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
   "main": "dist/index.js",
   "bin": {
     "storage-server": "./dist/cli.js"
   },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "cli": "tsx src/cli.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "test": "vitest run"
+    "test": "vitest run",
+    "smoke-test": "node scripts/smoke-test.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.758.0",
@@ -28,6 +37,7 @@
     "@types/node": "^22.13.4",
     "tsx": "^4.19.3",
     "typescript": "^5.7.3",
+    "vite": "^8.3.4",
     "vitest": "^5.0.5"
   },
   "engines": {

@@ -73,7 +73,7 @@ class KeysStore {
       return { publicKey: null, secretKey: null };
     }
 
-    const { key } = this.createKey('Default Storage API Key', ['read', 'write', 'delete', 'admin'], 200);
+    const { key } = this.createKey('Default API Key', ['read', 'write', 'delete', 'admin'], 500);
     return { publicKey: key, secretKey: key };
   }
 
