@@ -31,6 +31,8 @@ export async function uploadRoutes(fastify: FastifyInstance) {
         folder?: string;
         maxBytes?: number;
         expiresInSeconds?: number;
+        webhookUrl?: string;
+        access?: 'public' | 'private';
       };
 
       const folder = body.folder
@@ -41,6 +43,8 @@ export async function uploadRoutes(fastify: FastifyInstance) {
         folder,
         maxBytes: body.maxBytes,
         expiresInSeconds: body.expiresInSeconds || 300,
+        webhookUrl: body.webhookUrl,
+        access: body.access,
       });
 
       const protocol = request.protocol;
@@ -54,6 +58,70 @@ export async function uploadRoutes(fastify: FastifyInstance) {
         expiresInSeconds: body.expiresInSeconds || 300,
         folder: folder || null,
         maxBytes: body.maxBytes || null,
+        access: body.access || 'public',
+        webhookUrl: body.webhookUrl || null,
+      });
+    }
+  );
+
+  /**
+   * Generates a signed download URL for private assets
+   * POST /v1/download/sign
+   */
+  fastify.post(
+    '/v1/download/sign',
+    { preHandler: [requireApiKey('read')] },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const keyRecord = request.apiKeyRecord;
+      if (!keyRecord) {
+        return reply.status(401).send({
+          success: false,
+          error: { code: 'AUTH_REQUIRED', message: 'Valid API Key required to generate signed download URLs.' },
+        });
+      }
+
+      const body = (request.body || {}) as {
+        publicId: string;
+        expiresInSeconds?: number;
+        resourceType?: 'image' | 'raw';
+        transform?: string;
+      };
+
+      if (!body.publicId) {
+        return reply.status(400).send({
+          success: false,
+          error: { code: 'MISSING_PARAM', message: 'publicId is required to generate a signed download URL.' },
+        });
+      }
+
+      const cleanPublicId = body.publicId.replace(/^[\/\\]+/, '').replace(/\\/g, '/');
+      const expiresInSeconds = body.expiresInSeconds || 300;
+      const resourceType = body.resourceType === 'raw' ? 'raw' : 'image';
+
+      const sigInfo = uploadSigner.createDownloadSignature(
+        keyRecord.id,
+        keyRecord.keyHash,
+        cleanPublicId,
+        expiresInSeconds
+      );
+
+      const protocol = request.protocol;
+      const host = request.headers.host;
+      const baseUrl = `${protocol}://${host}`;
+
+      let pathPrefix = `/v1/${resourceType}`;
+      if (body.transform && resourceType === 'image') {
+        pathPrefix = `${pathPrefix}/${body.transform}`;
+      }
+
+      const signedUrl = `${baseUrl}${pathPrefix}/${cleanPublicId}?exp=${sigInfo.exp}&sig=${sigInfo.sig}&keyId=${sigInfo.keyId}`;
+
+      return reply.status(200).send({
+        success: true,
+        publicId: cleanPublicId,
+        signedUrl,
+        expiresInSeconds,
+        expiresAt: sigInfo.exp,
       });
     }
   );
@@ -143,6 +211,15 @@ export async function uploadRoutes(fastify: FastifyInstance) {
       const rawUnique = fields.unique_filename?.value || fields.uniqueFilename?.value;
       const isUniqueRequested = rawUnique === true || rawUnique === 'true' || rawUnique === '1';
 
+      // Access control: 'public' (default) or 'private'
+      const rawAccess = fields.access?.value ? String(fields.access.value).toLowerCase() : undefined;
+      let access: 'public' | 'private' = 'public';
+      if (signedPayload?.access) {
+        access = signedPayload.access;
+      } else if (rawAccess === 'private') {
+        access = 'private';
+      }
+
       let filenameId: string;
       if (customPublicId) {
         filenameId = customPublicId;
@@ -216,6 +293,7 @@ export async function uploadRoutes(fastify: FastifyInstance) {
         resourceType: detected.category,
         storageDriver: getStorageProviderName(),
         etag: stored.etag,
+        access,
         createdAt: existing?.createdAt || stored.createdAt,
       };
 
@@ -227,6 +305,42 @@ export async function uploadRoutes(fastify: FastifyInstance) {
       const baseUrl = `${protocol}://${host}`;
       const assetUrl = `${baseUrl}/v1/image/${record.publicId}.${record.format}`;
       const rawUrl = `${baseUrl}/v1/raw/${record.publicId}.${record.format}`;
+
+      // Asynchronous webhook dispatch if configured
+      const rawWebhookUrl =
+        signedPayload?.webhookUrl ||
+        (fields.webhook_url?.value ? String(fields.webhook_url.value) : undefined) ||
+        (fields.webhookUrl?.value ? String(fields.webhookUrl.value) : undefined);
+
+      if (rawWebhookUrl && typeof rawWebhookUrl === 'string' && /^https?:\/\//i.test(rawWebhookUrl)) {
+        fetch(rawWebhookUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'User-Agent': 'DevCloudDesk-Storage/1.0',
+          },
+          body: JSON.stringify({
+            event: 'file.uploaded',
+            timestamp: Math.floor(Date.now() / 1000),
+            asset: {
+              publicId: record.publicId,
+              originalName: record.originalName,
+              format: record.format,
+              bytes: record.bytes,
+              width: record.width,
+              height: record.height,
+              resourceType: record.resourceType,
+              access: record.access || 'public',
+              etag: record.etag,
+              url: assetUrl,
+              rawUrl,
+              createdAt: record.createdAt,
+            },
+          }),
+        }).catch((err: any) => {
+          fastify.log.warn(`[Webhook] Failed to dispatch webhook to ${rawWebhookUrl}: ${err.message}`);
+        });
+      }
 
       return reply.status(existing ? 200 : 201).send({
         success: true,
@@ -243,6 +357,7 @@ export async function uploadRoutes(fastify: FastifyInstance) {
           bytes: record.bytes,
           storageDriver: record.storageDriver,
           etag: record.etag,
+          access: record.access || 'public',
           url: assetUrl,
           secure_url: assetUrl,
           secureUrl: assetUrl,

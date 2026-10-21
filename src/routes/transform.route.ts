@@ -8,6 +8,10 @@ import { transformLimiter } from '../core/transform-limiter.js';
 import { cacheManager } from '../storage/cache-manager.js';
 import { getStorageDriver } from '../storage/index.js';
 
+import { filesStore } from '../core/files-store.js';
+import { keysStore } from '../core/keys-store.js';
+import { uploadSigner } from '../core/signer.js';
+
 function isTransformationParamString(segment: string): boolean {
   if (!segment || segment.trim() === '') return false;
   if (segment === 'original') return true;
@@ -46,6 +50,53 @@ function isImageMime(mime: string): boolean {
   return mime.startsWith('image/') && mime !== 'image/svg+xml';
 }
 
+async function checkAssetAccess(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  cleanPublicId: string
+): Promise<{ allowed: boolean; isPrivate: boolean }> {
+  const baseId = cleanPublicId.replace(/\.[a-z0-9]+$/i, '');
+  const meta = (await filesStore.findByPublicId(cleanPublicId)) || (await filesStore.findByPublicId(baseId));
+
+  if (!meta || meta.access !== 'private') {
+    return { allowed: true, isPrivate: false }; // Public asset
+  }
+
+  // 1. Check API Key header
+  const authHeader = request.headers.authorization || request.headers['x-api-key'];
+  if (authHeader && typeof authHeader === 'string') {
+    const rawKey = authHeader.replace(/^Bearer\s+/i, '').trim();
+    const verified = keysStore.verifyApiKey(rawKey);
+    if (verified) {
+      const perms = verified.permissions || [];
+      if (perms.includes('read') || perms.includes('admin') || verified.type === 'secret') {
+        return { allowed: true, isPrivate: true };
+      }
+    }
+  }
+
+  // 2. Check signed URL query parameters (?exp=...&sig=...&keyId=...)
+  const query = (request.query || {}) as { exp?: string; sig?: string; keyId?: string };
+  const sigResult = uploadSigner.verifyDownloadSignature(cleanPublicId, query);
+  if (sigResult.valid) {
+    return { allowed: true, isPrivate: true };
+  }
+  const baseSigResult = uploadSigner.verifyDownloadSignature(baseId, query);
+  if (baseSigResult.valid) {
+    return { allowed: true, isPrivate: true };
+  }
+
+  // Access denied
+  reply.status(403).send({
+    success: false,
+    error: {
+      code: 'ACCESS_DENIED',
+      message: sigResult.error || 'This asset is private. A valid signed URL or API key is required.',
+    },
+  });
+  return { allowed: false, isPrivate: true };
+}
+
 export async function transformRoutes(fastify: FastifyInstance) {
   /**
    * Raw Media & Document Delivery:
@@ -65,6 +116,13 @@ export async function transformRoutes(fastify: FastifyInstance) {
       .replace(/^(\.\.[\/\\])+/, '')
       .replace(/^[\/\\]+/, '')
       .replace(/\\/g, '/');
+
+    const accessCheck = await checkAssetAccess(request, reply, cleanPublicId);
+    if (!accessCheck.allowed) return;
+
+    const cacheControlHeader = accessCheck.isPrivate
+      ? 'private, no-cache, no-store, must-revalidate'
+      : 'public, max-age=31536000, immutable';
 
     const storage = getStorageDriver();
     let storageKey = cleanPublicId;
@@ -108,7 +166,7 @@ export async function transformRoutes(fastify: FastifyInstance) {
     return reply
       .header('Content-Type', mime)
       .header('Content-Disposition', disposition)
-      .header('Cache-Control', 'public, max-age=31536000, immutable')
+      .header('Cache-Control', cacheControlHeader)
       .header('ETag', asset.meta.etag)
       .header('X-Storage-Delivery', 'RAW')
       .header('X-DCD-Delivery', 'RAW')
@@ -145,6 +203,13 @@ export async function transformRoutes(fastify: FastifyInstance) {
         cleanPublicId = normalized.slice(firstSlashIdx + 1);
       }
     }
+
+    const accessCheck = await checkAssetAccess(request, reply, cleanPublicId);
+    if (!accessCheck.allowed) return;
+
+    const cacheControlHeader = accessCheck.isPrivate
+      ? 'private, no-cache, no-store, must-revalidate'
+      : 'public, max-age=31536000, immutable';
 
     const storage = getStorageDriver();
     let storageKey = cleanPublicId;
@@ -184,7 +249,7 @@ export async function transformRoutes(fastify: FastifyInstance) {
 
       return reply
         .header('Content-Type', mime)
-        .header('Cache-Control', 'public, max-age=31536000, immutable')
+        .header('Cache-Control', cacheControlHeader)
         .header('ETag', asset.meta.etag)
         .header('X-Storage-Cache', 'BYPASS')
         .header('X-DCD-Cache', 'BYPASS')
@@ -213,7 +278,7 @@ export async function transformRoutes(fastify: FastifyInstance) {
 
       return reply
         .header('Content-Type', targetMime)
-        .header('Cache-Control', 'public, max-age=31536000, immutable')
+        .header('Cache-Control', cacheControlHeader)
         .header('ETag', etag)
         .header('Vary', 'Accept')
         .header('X-Storage-Cache', 'HIT')
@@ -247,7 +312,7 @@ export async function transformRoutes(fastify: FastifyInstance) {
 
       return reply
         .header('Content-Type', result.mimeType)
-        .header('Cache-Control', 'public, max-age=31536000, immutable')
+        .header('Cache-Control', cacheControlHeader)
         .header('ETag', etag)
         .header('Vary', 'Accept')
         .header('X-Storage-Cache', 'MISS')

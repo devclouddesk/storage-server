@@ -78,6 +78,28 @@ class FilesStore {
   }
 
   /**
+   * Updates metadata for an existing asset (e.g. toggling access between 'public' and 'private')
+   */
+  async updateFileMeta(publicId: string, updates: Partial<MediaFileRecord>): Promise<MediaFileRecord | null> {
+    const existing = await this.findByPublicId(publicId);
+    if (!existing) return null;
+
+    const ext = existing.format ? `.${existing.format}` : '';
+    const storageKey = `${existing.publicId}${ext}`;
+    const updatedRecord: MediaFileRecord = {
+      ...existing,
+      ...updates,
+      // Retain identity invariants
+      id: existing.id,
+      publicId: existing.publicId,
+      createdAt: existing.createdAt,
+    };
+
+    await this.saveFileMeta(storageKey, updatedRecord);
+    return updatedRecord;
+  }
+
+  /**
    * Scans uploads directory for metadata and returns paginated file list
    */
   async listMediaFiles(

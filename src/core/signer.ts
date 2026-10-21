@@ -7,6 +7,8 @@ export interface SignedUploadPayload {
   maxBytes?: number;
   exp: number; // Unix timestamp in seconds
   nonce: string;
+  webhookUrl?: string;
+  access?: 'public' | 'private';
 }
 
 export interface SignedTokenVerification {
@@ -26,6 +28,8 @@ export class UploadSigner {
       folder?: string;
       maxBytes?: number;
       expiresInSeconds?: number;
+      webhookUrl?: string;
+      access?: 'public' | 'private';
     } = {}
   ): string {
     const expiresIn = options.expiresInSeconds || 300; // default 5 minutes
@@ -37,6 +41,8 @@ export class UploadSigner {
       maxBytes: options.maxBytes,
       exp,
       nonce: crypto.randomBytes(6).toString('hex'),
+      webhookUrl: options.webhookUrl,
+      access: options.access,
     };
 
     const payloadStr = Buffer.from(JSON.stringify(payload)).toString('base64url');
@@ -109,6 +115,67 @@ export class UploadSigner {
     }
 
     return { valid: true, payload };
+  }
+
+  /**
+   * Generates a tamper-proof HMAC-SHA256 signature for private asset downloads
+   */
+  createDownloadSignature(
+    keyId: string,
+    secretHash: string,
+    resourcePath: string,
+    expiresInSeconds = 300
+  ): { exp: number; sig: string; keyId: string } {
+    const exp = Math.floor(Date.now() / 1000) + expiresInSeconds;
+    const cleanPath = resourcePath.replace(/^\/+/, '');
+    const sig = crypto
+      .createHmac('sha256', secretHash)
+      .update(`${cleanPath}:${exp}`)
+      .digest('hex');
+
+    return { exp, sig, keyId };
+  }
+
+  /**
+   * Cryptographically verifies download signature for private assets
+   */
+  verifyDownloadSignature(
+    resourcePath: string,
+    query: { exp?: string | number; sig?: string; keyId?: string }
+  ): { valid: boolean; error?: string } {
+    if (!query.exp || !query.sig || !query.keyId) {
+      return { valid: false, error: 'Missing signature parameters (exp, sig, keyId required)' };
+    }
+
+    const exp = Number(query.exp);
+    if (isNaN(exp) || exp < Math.floor(Date.now() / 1000)) {
+      return { valid: false, error: 'Signed download link has expired' };
+    }
+
+    const keyRecord = keysStore.getKeyRecordById(query.keyId);
+    if (!keyRecord) {
+      return { valid: false, error: 'Signing key no longer exists or was revoked' };
+    }
+
+    const perms = keyRecord.permissions || [];
+    if (!perms.includes('read') && !perms.includes('admin') && keyRecord.type !== 'secret') {
+      return { valid: false, error: 'Signing key does not have read permissions' };
+    }
+
+    const cleanPath = resourcePath.replace(/^\/+/, '');
+    const expectedSig = crypto
+      .createHmac('sha256', keyRecord.keyHash)
+      .update(`${cleanPath}:${exp}`)
+      .digest('hex');
+
+    const expectedBuf = Buffer.from(expectedSig);
+    const actualBuf = Buffer.from(query.sig);
+
+    if (expectedBuf.length !== actualBuf.length || !crypto.timingSafeEqual(expectedBuf, actualBuf)) {
+      return { valid: false, error: 'Invalid or tampered signature' };
+    }
+
+    return { valid: true };
   }
 }
 

@@ -34,6 +34,7 @@ export interface MediaFileRecord {
   resourceType?: 'image' | 'raw' | 'video' | 'audio' | 'document' | 'archive';
   storageDriver: 'local' | 's3';
   etag: string;
+  access?: 'public' | 'private';
   createdAt: number;
 }
 

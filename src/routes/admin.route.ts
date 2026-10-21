@@ -119,6 +119,81 @@ export async function adminRoutes(fastify: FastifyInstance) {
   });
 
   /**
+   * GET /v1/admin/files/*
+   * Retrieves full metadata for a single asset by publicId
+   */
+  fastify.get('/v1/admin/files/*', async (request: FastifyRequest, reply: FastifyReply) => {
+    const rawPublicId = (request.params as any)['*'] as string;
+    if (!rawPublicId) {
+      return reply.status(400).send({ success: false, error: { message: 'Missing publicId' } });
+    }
+
+    const decoded = decodeURIComponent(rawPublicId);
+    const file = await filesStore.findByPublicId(decoded);
+    if (!file) {
+      return reply.status(404).send({
+        success: false,
+        error: { code: 'ASSET_NOT_FOUND', message: `File '${decoded}' was not found in storage.` },
+      });
+    }
+
+    const protocol = request.protocol;
+    const host = request.headers.host;
+    const baseUrl = `${protocol}://${host}`;
+    const ext = file.format ? `.${file.format}` : '';
+    const directUrl = `${baseUrl}/v1/image/${file.publicId}${ext}`;
+    const rawUrl = `${baseUrl}/v1/raw/${file.publicId}${ext}`;
+
+    return reply.status(200).send({
+      success: true,
+      asset: {
+        ...file,
+        public_id: file.publicId,
+        resource_type: file.resourceType,
+        url: directUrl,
+        secure_url: directUrl,
+        rawUrl,
+      },
+    });
+  });
+
+  /**
+   * PATCH /v1/admin/files/*
+   * Updates asset access level (e.g. 'public' <-> 'private')
+   */
+  fastify.patch('/v1/admin/files/*', async (request: FastifyRequest, reply: FastifyReply) => {
+    const rawPublicId = (request.params as any)['*'] as string;
+    if (!rawPublicId) {
+      return reply.status(400).send({ success: false, error: { message: 'Missing publicId' } });
+    }
+
+    const decoded = decodeURIComponent(rawPublicId);
+    const body = (request.body || {}) as { access?: 'public' | 'private' };
+    if (!body.access || (body.access !== 'public' && body.access !== 'private')) {
+      return reply.status(400).send({
+        success: false,
+        error: { message: "Invalid payload. 'access' must be 'public' or 'private'." },
+      });
+    }
+
+    const updated = await filesStore.updateFileMeta(decoded, { access: body.access });
+    if (!updated) {
+      return reply.status(404).send({
+        success: false,
+        error: { code: 'ASSET_NOT_FOUND', message: `File '${decoded}' was not found in storage.` },
+      });
+    }
+
+    await cacheManager.purgeAll();
+
+    return reply.status(200).send({
+      success: true,
+      message: `Access mode updated to '${body.access}'`,
+      asset: updated,
+    });
+  });
+
+  /**
    * POST /v1/admin/keys
    */
   fastify.post('/v1/admin/keys', async (request: FastifyRequest, reply: FastifyReply) => {

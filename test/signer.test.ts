@@ -45,4 +45,23 @@ describe('UploadSigner', () => {
     expect(res.valid).toBe(false);
     expect(res.error).toBe('Upload token has expired');
   });
+
+  it('creates download signature for private assets with exp, sig, and keyId', () => {
+    const res = signer.createDownloadSignature('key_test_1', 'hash_secret_999', 'invoices/inv-001.pdf', 900);
+    expect(res.keyId).toBe('key_test_1');
+    expect(typeof res.sig).toBe('string');
+    expect(res.sig.length).toBe(64); // SHA-256 hex length
+    expect(res.exp).toBeGreaterThan(Math.floor(Date.now() / 1000));
+  });
+
+  it('rejects expired download signatures', () => {
+    const pastExp = Math.floor(Date.now() / 1000) - 50;
+    const res = signer.verifyDownloadSignature('invoices/inv-001.pdf', {
+      exp: pastExp,
+      sig: 'some_sig',
+      keyId: 'key_test_1',
+    });
+    expect(res.valid).toBe(false);
+    expect(res.error).toBe('Signed download link has expired');
+  });
 });
