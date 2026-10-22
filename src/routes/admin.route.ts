@@ -9,6 +9,7 @@ import { keysStore } from '../core/keys-store.js';
 import { extractApiKey, requireApiKey } from '../middleware/auth.js';
 import { cacheManager } from '../storage/cache-manager.js';
 import { getStorageDriver, getStorageProviderName, saveStorageConfig } from '../storage/index.js';
+import { getRequestBaseUrl } from '../core/base-url.js';
 import type { ServerStats } from '../types/index.js';
 
 export async function adminRoutes(fastify: FastifyInstance) {
@@ -85,9 +86,7 @@ export async function adminRoutes(fastify: FastifyInstance) {
 
     const { files, total } = await filesStore.listMediaFiles(limit, offset, query.folder);
 
-    const protocol = request.protocol;
-    const host = request.headers.host;
-    const baseUrl = `${protocol}://${host}`;
+    const baseUrl = getRequestBaseUrl(request);
 
     const enrichedFiles = files.map((f) => {
       const ext = f.format ? `.${f.format}` : '';
@@ -137,9 +136,7 @@ export async function adminRoutes(fastify: FastifyInstance) {
       });
     }
 
-    const protocol = request.protocol;
-    const host = request.headers.host;
-    const baseUrl = `${protocol}://${host}`;
+    const baseUrl = getRequestBaseUrl(request);
     const ext = file.format ? `.${file.format}` : '';
     const directUrl = `${baseUrl}/v1/image/${file.publicId}${ext}`;
     const rawUrl = `${baseUrl}/v1/raw/${file.publicId}${ext}`;

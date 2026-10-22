@@ -14,6 +14,7 @@ import { diskGuard } from './storage/disk-guard.js';
 async function bootstrap() {
   const server = Fastify({
     logger: env.NODE_ENV !== 'test',
+    trustProxy: true,
   });
 
   // Global Error Handler

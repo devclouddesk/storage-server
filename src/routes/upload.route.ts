@@ -8,6 +8,7 @@ import { foldersStore } from '../core/folders-store.js';
 import { requireApiKey } from '../middleware/auth.js';
 import { uploadSigner } from '../core/signer.js';
 import { getStorageDriver, getStorageProviderName } from '../storage/index.js';
+import { getRequestBaseUrl } from '../core/base-url.js';
 import type { MediaFileRecord } from '../types/index.js';
 
 export async function uploadRoutes(fastify: FastifyInstance) {
@@ -47,9 +48,7 @@ export async function uploadRoutes(fastify: FastifyInstance) {
         access: body.access,
       });
 
-      const protocol = request.protocol;
-      const host = request.headers.host;
-      const baseUrl = `${protocol}://${host}`;
+      const baseUrl = getRequestBaseUrl(request);
 
       return reply.status(200).send({
         success: true,
@@ -105,9 +104,7 @@ export async function uploadRoutes(fastify: FastifyInstance) {
         expiresInSeconds
       );
 
-      const protocol = request.protocol;
-      const host = request.headers.host;
-      const baseUrl = `${protocol}://${host}`;
+      const baseUrl = getRequestBaseUrl(request);
 
       let pathPrefix = `/v1/${resourceType}`;
       if (body.transform && resourceType === 'image') {
@@ -196,7 +193,7 @@ export async function uploadRoutes(fastify: FastifyInstance) {
         .replace(/^\/+|\/+$/g, '');
 
       if (cleanFolder) {
-        foldersStore.createFolder(cleanFolder).catch(() => {});
+        foldersStore.createFolder(cleanFolder).catch(() => { });
       }
       const customPublicId = fields.public_id?.value ? String(fields.public_id.value).trim() : null;
 
@@ -272,8 +269,8 @@ export async function uploadRoutes(fastify: FastifyInstance) {
         // If overwriting and format changed (e.g. was .png, now .jpg), clean up the previous file
         if (existing.format !== format) {
           const oldStorageKey = `${existing.publicId}.${existing.format}`;
-          await storage.delete(oldStorageKey).catch(() => {});
-          await filesStore.deleteMediaFile(oldStorageKey).catch(() => {});
+          await storage.delete(oldStorageKey).catch(() => { });
+          await filesStore.deleteMediaFile(oldStorageKey).catch(() => { });
         }
       }
 
@@ -300,9 +297,7 @@ export async function uploadRoutes(fastify: FastifyInstance) {
       // Persist to local file metadata
       await filesStore.saveFileMeta(storageKey, record);
 
-      const protocol = request.protocol;
-      const host = request.headers.host;
-      const baseUrl = `${protocol}://${host}`;
+      const baseUrl = getRequestBaseUrl(request);
       const assetUrl = `${baseUrl}/v1/image/${record.publicId}.${record.format}`;
       const rawUrl = `${baseUrl}/v1/raw/${record.publicId}.${record.format}`;
 

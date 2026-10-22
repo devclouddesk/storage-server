@@ -339,7 +339,7 @@ async function doTransform(
   const transformed = await transformImageBuffer(inputBuffer, params, acceptHeader);
 
   // Write to local disk cache asynchronously
-  cacheManager.put(cacheFilename, transformed.buffer).catch(() => {});
+  cacheManager.put(cacheFilename, transformed.buffer).catch(() => { });
 
   return {
     buffer: transformed.buffer,
