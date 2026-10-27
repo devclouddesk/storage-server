@@ -49,22 +49,32 @@ export function requireApiKey(
   requiredPermission: 'any' | 'read' | 'write' | 'delete' | 'admin' | 'public' | 'secret' = 'any'
 ) {
   return async (request: FastifyRequest, reply: FastifyReply) => {
-    // Control Plane / DevCloudDesk Agent internal bypass
-    const ip = request.ip || '';
-    const isInternal =
-      ip === '127.0.0.1' ||
-      ip === '::1' ||
-      ip.startsWith('172.') ||
-      ip.startsWith('10.') ||
-      request.headers['x-dcd-agent'] === 'true';
-
-    if (isInternal) {
-      return;
-    }
-
     const rawKey = extractApiKey(request);
 
+    // If no key provided, check internal bypass
     if (!rawKey) {
+      const ip = request.ip || '';
+      const isInternal =
+        ip === '127.0.0.1' ||
+        ip === '::1' ||
+        ip.startsWith('172.') ||
+        ip.startsWith('10.') ||
+        request.headers['x-dcd-agent'] === 'true';
+
+      if (isInternal) {
+        request.apiKeyRecord = {
+          id: 'internal-agent',
+          keyHash: '',
+          keyPrefix: 'internal',
+          name: 'Internal Agent',
+          permissions: ['read', 'write', 'delete', 'admin'],
+          type: 'secret',
+          rateLimit: 1000,
+          createdAt: 0,
+        };
+        return;
+      }
+
       return reply.status(401).send({
         success: false,
         error: {

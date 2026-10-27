@@ -3,21 +3,22 @@ import path from 'node:path';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { env } from '../config/env.js';
+import { formatAssetResponse } from '../core/asset-serializer.js';
+import { getRequestBaseUrl } from '../core/base-url.js';
 import { filesStore } from '../core/files-store.js';
 import { foldersStore } from '../core/folders-store.js';
 import { keysStore } from '../core/keys-store.js';
-import { extractApiKey, requireApiKey } from '../middleware/auth.js';
+import { extractApiKey } from '../middleware/auth.js';
 import { cacheManager } from '../storage/cache-manager.js';
-import { getStorageDriver, getStorageProviderName, saveStorageConfig } from '../storage/index.js';
-import { getRequestBaseUrl } from '../core/base-url.js';
+import { getStorageProviderName, saveStorageConfig } from '../storage/index.js';
 import type { ServerStats } from '../types/index.js';
 
 export async function adminRoutes(fastify: FastifyInstance) {
-  // Pre-handler for all admin endpoints
+  // Pre-handler hook for admin authentication
   fastify.addHook('preHandler', async (request, reply) => {
     const rawKey = extractApiKey(request);
 
-    // 1. Direct Master Key check (via header x-admin-key, Authorization Bearer, or query)
+    // 1. Direct Master Key check
     if (env.MASTER_KEY && rawKey === env.MASTER_KEY) {
       return;
     }
@@ -85,21 +86,8 @@ export async function adminRoutes(fastify: FastifyInstance) {
     const offset = (page - 1) * limit;
 
     const { files, total } = await filesStore.listMediaFiles(limit, offset, query.folder);
-
     const baseUrl = getRequestBaseUrl(request);
-
-    const enrichedFiles = files.map((f) => {
-      const ext = f.format ? `.${f.format}` : '';
-      const directUrl = `${baseUrl}/v1/image/${f.publicId}${ext}`;
-      return {
-        ...f,
-        public_id: f.publicId,
-        resource_type: f.resourceType,
-        url: directUrl,
-        secure_url: directUrl,
-        secureUrl: directUrl,
-      };
-    });
+    const enrichedFiles = files.map((f) => formatAssetResponse(f, baseUrl));
 
     return {
       success: true,
@@ -137,20 +125,9 @@ export async function adminRoutes(fastify: FastifyInstance) {
     }
 
     const baseUrl = getRequestBaseUrl(request);
-    const ext = file.format ? `.${file.format}` : '';
-    const directUrl = `${baseUrl}/v1/image/${file.publicId}${ext}`;
-    const rawUrl = `${baseUrl}/v1/raw/${file.publicId}${ext}`;
-
     return reply.status(200).send({
       success: true,
-      asset: {
-        ...file,
-        public_id: file.publicId,
-        resource_type: file.resourceType,
-        url: directUrl,
-        secure_url: directUrl,
-        rawUrl,
-      },
+      asset: formatAssetResponse(file, baseUrl),
     });
   });
 
@@ -183,70 +160,12 @@ export async function adminRoutes(fastify: FastifyInstance) {
 
     await cacheManager.purgeAll();
 
+    const baseUrl = getRequestBaseUrl(request);
     return reply.status(200).send({
       success: true,
       message: `Access mode updated to '${body.access}'`,
-      asset: updated,
+      asset: formatAssetResponse(updated, baseUrl),
     });
-  });
-
-  /**
-   * POST /v1/admin/keys
-   */
-  fastify.post('/v1/admin/keys', async (request: FastifyRequest, reply: FastifyReply) => {
-    const schema = z.object({
-      name: z.string().min(1).max(100),
-      permissions: z.array(z.enum(['read', 'write', 'delete', 'admin'])).optional(),
-      roles: z.array(z.string()).optional(),
-      type: z.enum(['public', 'secret']).optional(),
-      rateLimit: z.number().int().min(10).max(10000).default(120),
-    });
-
-    const parsed = schema.safeParse(request.body);
-    if (!parsed.success) {
-      return reply.status(400).send({ success: false, error: parsed.error.format() });
-    }
-
-    // Map permissions / roles
-    let permissions: any[] = parsed.data.permissions || [];
-    if (permissions.length === 0 && parsed.data.roles && parsed.data.roles.length > 0) {
-      permissions = parsed.data.roles.map((r: string) => (r === 'add' || r === 'upload' ? 'write' : r));
-    }
-    if (permissions.length === 0) {
-      permissions = parsed.data.type === 'secret' ? ['read', 'write', 'delete', 'admin'] : ['read', 'write'];
-    }
-
-    const { key, record } = keysStore.createKey(
-      parsed.data.name,
-      permissions,
-      parsed.data.rateLimit
-    );
-
-    return reply.status(201).send({
-      success: true,
-      key, // Return raw key only once on creation
-      apiKey: record,
-    });
-  });
-
-  /**
-   * GET /v1/admin/keys
-   */
-  fastify.get('/v1/admin/keys', async () => {
-    const keys = keysStore.listApiKeys();
-    return { success: true, keys };
-  });
-
-  /**
-   * DELETE /v1/admin/keys/:id
-   */
-  fastify.delete('/v1/admin/keys/:id', async (request: FastifyRequest, reply: FastifyReply) => {
-    const { id } = request.params as { id: string };
-    const deleted = keysStore.deleteApiKey(id);
-    if (!deleted) {
-      return reply.status(404).send({ success: false, error: { message: 'Key not found' } });
-    }
-    return { success: true, message: 'API key revoked' };
   });
 
   /**
@@ -276,8 +195,15 @@ export async function adminRoutes(fastify: FastifyInstance) {
   fastify.delete('/v1/delete/*', handleDelete);
 
   /**
+   * POST /v1/admin/purge-cache
+   */
+  fastify.post('/v1/admin/purge-cache', async () => {
+    const count = await cacheManager.purgeAll();
+    return { success: true, purgedCount: count, message: 'All cached transformations purged' };
+  });
+
+  /**
    * GET /v1/admin/folders
-   * Returns all storage folders with item counts
    */
   fastify.get('/v1/admin/folders', async (request: FastifyRequest) => {
     const query = request.query as { parent?: string };
@@ -287,7 +213,6 @@ export async function adminRoutes(fastify: FastifyInstance) {
 
   /**
    * POST /v1/admin/folders
-   * Creates a new virtual or explicit folder
    */
   fastify.post('/v1/admin/folders', async (request: FastifyRequest, reply: FastifyReply) => {
     const body = (request.body || {}) as { name?: string; path?: string; parent?: string };
@@ -315,7 +240,6 @@ export async function adminRoutes(fastify: FastifyInstance) {
 
   /**
    * DELETE /v1/admin/folders/*
-   * Deletes a folder and all its contents
    */
   fastify.delete('/v1/admin/folders/*', async (request: FastifyRequest, reply: FastifyReply) => {
     const rawPath = (request.params as any)['*'] as string;
@@ -332,6 +256,78 @@ export async function adminRoutes(fastify: FastifyInstance) {
       deletedCount,
       message: `Folder '${decoded}' and ${deletedCount} file(s) deleted successfully`,
     };
+  });
+
+  /**
+   * POST /v1/admin/keys
+   */
+  fastify.post('/v1/admin/keys', async (request: FastifyRequest, reply: FastifyReply) => {
+    const schema = z.object({
+      name: z.string().min(1).max(100),
+      permissions: z.array(z.enum(['read', 'write', 'delete', 'admin'])).optional(),
+      roles: z.array(z.string()).optional(),
+      type: z.enum(['public', 'secret']).optional(),
+      rateLimit: z.number().int().min(10).max(10000).default(120),
+    });
+
+    const parsed = schema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.status(400).send({ success: false, error: parsed.error.format() });
+    }
+
+    let permissions: any[] = parsed.data.permissions || [];
+    if (permissions.length === 0 && parsed.data.roles && parsed.data.roles.length > 0) {
+      permissions = parsed.data.roles.map((r: string) => (r === 'add' || r === 'upload' ? 'write' : r));
+    }
+    if (permissions.length === 0) {
+      permissions = parsed.data.type === 'secret' ? ['read', 'write', 'delete', 'admin'] : ['read', 'write'];
+    }
+
+    const { key, record } = keysStore.createKey(
+      parsed.data.name,
+      permissions,
+      parsed.data.rateLimit
+    );
+
+    return reply.status(201).send({
+      success: true,
+      key,
+      apiKey: record,
+    });
+  });
+
+  /**
+   * GET /v1/admin/keys
+   */
+  fastify.get('/v1/admin/keys', async () => {
+    const keys = keysStore.listApiKeys();
+    return { success: true, keys };
+  });
+
+  /**
+   * DELETE /v1/admin/keys/:id and DELETE /v1/admin/keys
+   */
+  fastify.delete('/v1/admin/keys/:id', async (request: FastifyRequest, reply: FastifyReply) => {
+    const { id } = request.params as { id: string };
+    const deleted = keysStore.deleteApiKey(id);
+    if (!deleted) {
+      return reply.status(404).send({ success: false, error: { message: 'Key not found' } });
+    }
+    return { success: true, message: 'API key revoked' };
+  });
+
+  fastify.delete('/v1/admin/keys', async (request: FastifyRequest, reply: FastifyReply) => {
+    const query = (request.query || {}) as { id?: string; keyId?: string };
+    const body = (request.body || {}) as { id?: string; keyId?: string };
+    const targetId = query.id || query.keyId || body.id || body.keyId;
+    if (!targetId) {
+      return reply.status(400).send({ success: false, error: { message: 'Missing key id' } });
+    }
+    const deleted = keysStore.deleteApiKey(targetId);
+    if (!deleted) {
+      return reply.status(404).send({ success: false, error: { message: 'Key not found' } });
+    }
+    return { success: true, message: 'API key revoked' };
   });
 
   /**

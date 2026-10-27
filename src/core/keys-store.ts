@@ -192,11 +192,21 @@ class KeysStore {
   }
 
   /**
-   * Revokes / deletes an API key by ID
+   * Revokes / deletes an API key by ID, prefix, or hash
    */
   deleteApiKey(id: string): boolean {
+    const cleanId = String(id || '').trim();
+    if (!cleanId) return false;
     const keys = this.readKeys();
-    const index = keys.findIndex((k) => k.id === id);
+    const index = keys.findIndex(
+      (k) =>
+        k.id === cleanId ||
+        k.keyPrefix === cleanId ||
+        (k.keyPrefix && cleanId.startsWith(k.keyPrefix)) ||
+        (cleanId && k.keyPrefix && k.keyPrefix.startsWith(cleanId)) ||
+        k.keyHash === cleanId ||
+        k.name === cleanId
+    );
     if (index === -1) return false;
 
     keys.splice(index, 1);

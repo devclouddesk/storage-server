@@ -104,3 +104,56 @@ export function normalizeParamsKey(params: TransformationParams): string {
 
   return parts.length > 0 ? parts.join(',') : 'original';
 }
+
+export function parseQueryParams(query: Record<string, any>): TransformationParams {
+  const result: TransformationParams = {};
+  if (!query) return result;
+
+  const w = query.w || query.width;
+  if (w) {
+    const val = parseInt(String(w), 10);
+    if (!isNaN(val) && val > 0) result.width = Math.min(val, 4096);
+  }
+
+  const h = query.h || query.height;
+  if (h) {
+    const val = parseInt(String(h), 10);
+    if (!isNaN(val) && val > 0) result.height = Math.min(val, 4096);
+  }
+
+  const c = query.c || query.crop || query.fit;
+  if (c) {
+    const rawMode = String(c).toLowerCase();
+    const mode = rawMode === 'cover' ? 'fill' : rawMode === 'contain' ? 'fit' : rawMode;
+    if (VALID_CROPS.has(mode as CropMode)) {
+      result.cropMode = mode as CropMode;
+    }
+  }
+
+  const f = query.f || query.format;
+  if (f) {
+    const fmt = String(f).toLowerCase() as SupportedFormat;
+    if (VALID_FORMATS.has(fmt)) {
+      result.format = fmt;
+    }
+  }
+
+  const q = query.q || query.quality;
+  if (q) {
+    const qStr = String(q).toLowerCase();
+    if (qStr === 'auto') {
+      result.quality = 'auto';
+    } else {
+      const num = parseInt(qStr, 10);
+      if (!isNaN(num) && num >= 1 && num <= 100) result.quality = num;
+    }
+  }
+
+  const blur = query.blur;
+  if (blur) {
+    const bNum = parseFloat(String(blur));
+    if (!isNaN(bNum) && bNum > 0) result.blur = Math.min(Math.max(bNum, 0.3), 100);
+  }
+
+  return result;
+}

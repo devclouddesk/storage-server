@@ -1,14 +1,16 @@
 import path from 'node:path';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { nanoid } from 'nanoid';
-import { detectFileType } from '../core/magic-bytes.js';
-import { inspectImageMetadata } from '../core/sharp-pipeline.js';
+import { getRequestBaseUrl } from '../core/base-url.js';
 import { filesStore } from '../core/files-store.js';
 import { foldersStore } from '../core/folders-store.js';
-import { requireApiKey } from '../middleware/auth.js';
+import { detectFileType } from '../core/magic-bytes.js';
+import { inspectImageMetadata } from '../core/sharp-pipeline.js';
 import { uploadSigner } from '../core/signer.js';
+import { formatAssetResponse } from '../core/asset-serializer.js';
+import { DownloadSignSchema, UploadSignSchema } from '../core/schemas.js';
+import { requireApiKey } from '../middleware/auth.js';
 import { getStorageDriver, getStorageProviderName } from '../storage/index.js';
-import { getRequestBaseUrl } from '../core/base-url.js';
 import type { MediaFileRecord } from '../types/index.js';
 
 export async function uploadRoutes(fastify: FastifyInstance) {
@@ -28,24 +30,26 @@ export async function uploadRoutes(fastify: FastifyInstance) {
         });
       }
 
-      const body = (request.body || {}) as {
-        folder?: string;
-        maxBytes?: number;
-        expiresInSeconds?: number;
-        webhookUrl?: string;
-        access?: 'public' | 'private';
-      };
+      const parsed = UploadSignSchema.safeParse(request.body || {});
+      if (!parsed.success) {
+        return reply.status(400).send({
+          success: false,
+          error: { code: 'VALIDATION_ERROR', message: parsed.error.issues[0]?.message || 'Invalid sign parameters' },
+        });
+      }
 
-      const folder = body.folder
-        ? path.normalize(body.folder).replace(/^(\.\.[\/\\])+/, '').replace(/\\/g, '/').replace(/^\//, '')
+      const { folder: rawFolder, maxBytes, expiresInSeconds, webhookUrl, access } = parsed.data;
+
+      const folder = rawFolder
+        ? path.normalize(rawFolder).replace(/^(\.\.[\/\\])+/, '').replace(/\\/g, '/').replace(/^\//, '')
         : undefined;
 
       const token = uploadSigner.createToken(keyRecord.id, keyRecord.keyHash, {
         folder,
-        maxBytes: body.maxBytes,
-        expiresInSeconds: body.expiresInSeconds || 300,
-        webhookUrl: body.webhookUrl,
-        access: body.access,
+        maxBytes,
+        expiresInSeconds,
+        webhookUrl,
+        access,
       });
 
       const baseUrl = getRequestBaseUrl(request);
@@ -54,11 +58,11 @@ export async function uploadRoutes(fastify: FastifyInstance) {
         success: true,
         token,
         uploadUrl: `${baseUrl}/v1/upload`,
-        expiresInSeconds: body.expiresInSeconds || 300,
+        expiresInSeconds,
         folder: folder || null,
-        maxBytes: body.maxBytes || null,
-        access: body.access || 'public',
-        webhookUrl: body.webhookUrl || null,
+        maxBytes: maxBytes || null,
+        access,
+        webhookUrl: webhookUrl || null,
       });
     }
   );
@@ -79,23 +83,16 @@ export async function uploadRoutes(fastify: FastifyInstance) {
         });
       }
 
-      const body = (request.body || {}) as {
-        publicId: string;
-        expiresInSeconds?: number;
-        resourceType?: 'image' | 'raw';
-        transform?: string;
-      };
-
-      if (!body.publicId) {
+      const parsed = DownloadSignSchema.safeParse(request.body || {});
+      if (!parsed.success) {
         return reply.status(400).send({
           success: false,
-          error: { code: 'MISSING_PARAM', message: 'publicId is required to generate a signed download URL.' },
+          error: { code: 'VALIDATION_ERROR', message: parsed.error.issues[0]?.message || 'Invalid download sign parameters' },
         });
       }
 
-      const cleanPublicId = body.publicId.replace(/^[\/\\]+/, '').replace(/\\/g, '/');
-      const expiresInSeconds = body.expiresInSeconds || 300;
-      const resourceType = body.resourceType === 'raw' ? 'raw' : 'image';
+      const { publicId, expiresInSeconds, resourceType, transform } = parsed.data;
+      const cleanPublicId = publicId.replace(/^[\/\\]+/, '').replace(/\\/g, '/');
 
       const sigInfo = uploadSigner.createDownloadSignature(
         keyRecord.id,
@@ -105,10 +102,9 @@ export async function uploadRoutes(fastify: FastifyInstance) {
       );
 
       const baseUrl = getRequestBaseUrl(request);
-
-      let pathPrefix = `/v1/${resourceType}`;
-      if (body.transform && resourceType === 'image') {
-        pathPrefix = `${pathPrefix}/${body.transform}`;
+      let pathPrefix = '/cdn';
+      if (transform && resourceType === 'image') {
+        pathPrefix = `${pathPrefix}/${transform}`;
       }
 
       const signedUrl = `${baseUrl}${pathPrefix}/${cleanPublicId}?exp=${sigInfo.exp}&sig=${sigInfo.sig}&keyId=${sigInfo.keyId}`;
@@ -124,7 +120,7 @@ export async function uploadRoutes(fastify: FastifyInstance) {
   );
 
   /**
-   * Upload file (Supports images, PDFs, videos, SVGs, documents, archives)
+   * Upload file (Images, PDFs, videos, SVGs, documents, archives)
    * Accepts Master API Key OR Short-lived Signed Upload Token
    * POST /v1/upload
    */
@@ -146,16 +142,14 @@ export async function uploadRoutes(fastify: FastifyInstance) {
 
       // Signed token constraints validation (if uploaded via signed token)
       const signedPayload = request.signedUploadPayload;
-      if (signedPayload) {
-        if (signedPayload.maxBytes && buffer.length > signedPayload.maxBytes) {
-          return reply.status(413).send({
-            success: false,
-            error: {
-              code: 'FILE_TOO_LARGE',
-              message: `File exceeds maximum allowed size of ${signedPayload.maxBytes} bytes specified in upload token.`,
-            },
-          });
-        }
+      if (signedPayload?.maxBytes && buffer.length > signedPayload.maxBytes) {
+        return reply.status(413).send({
+          success: false,
+          error: {
+            code: 'FILE_TOO_LARGE',
+            message: `File exceeds maximum allowed size of ${signedPayload.maxBytes} bytes specified in upload token.`,
+          },
+        });
       }
 
       // Detect file type via magic bytes & extension fallback
@@ -193,7 +187,7 @@ export async function uploadRoutes(fastify: FastifyInstance) {
         .replace(/^\/+|\/+$/g, '');
 
       if (cleanFolder) {
-        foldersStore.createFolder(cleanFolder).catch(() => { });
+        foldersStore.createFolder(cleanFolder).catch(() => {});
       }
       const customPublicId = fields.public_id?.value ? String(fields.public_id.value).trim() : null;
 
@@ -229,11 +223,7 @@ export async function uploadRoutes(fastify: FastifyInstance) {
             .replace(/-+/g, '-')
             .replace(/^-|-$/g, '') || 'asset';
 
-        if (isUniqueRequested) {
-          filenameId = `${cleanName}-${nanoid(8)}`;
-        } else {
-          filenameId = cleanName;
-        }
+        filenameId = isUniqueRequested ? `${cleanName}-${nanoid(8)}` : cleanName;
       }
 
       const publicId =
@@ -269,8 +259,8 @@ export async function uploadRoutes(fastify: FastifyInstance) {
         // If overwriting and format changed (e.g. was .png, now .jpg), clean up the previous file
         if (existing.format !== format) {
           const oldStorageKey = `${existing.publicId}.${existing.format}`;
-          await storage.delete(oldStorageKey).catch(() => { });
-          await filesStore.deleteMediaFile(oldStorageKey).catch(() => { });
+          await storage.delete(oldStorageKey).catch(() => {});
+          await filesStore.deleteMediaFile(oldStorageKey).catch(() => {});
         }
       }
 
@@ -298,8 +288,7 @@ export async function uploadRoutes(fastify: FastifyInstance) {
       await filesStore.saveFileMeta(storageKey, record);
 
       const baseUrl = getRequestBaseUrl(request);
-      const assetUrl = `${baseUrl}/v1/image/${record.publicId}.${record.format}`;
-      const rawUrl = `${baseUrl}/v1/raw/${record.publicId}.${record.format}`;
+      const responseAsset = formatAssetResponse(record, baseUrl);
 
       // Asynchronous webhook dispatch if configured
       const rawWebhookUrl =
@@ -317,20 +306,7 @@ export async function uploadRoutes(fastify: FastifyInstance) {
           body: JSON.stringify({
             event: 'file.uploaded',
             timestamp: Math.floor(Date.now() / 1000),
-            asset: {
-              publicId: record.publicId,
-              originalName: record.originalName,
-              format: record.format,
-              bytes: record.bytes,
-              width: record.width,
-              height: record.height,
-              resourceType: record.resourceType,
-              access: record.access || 'public',
-              etag: record.etag,
-              url: assetUrl,
-              rawUrl,
-              createdAt: record.createdAt,
-            },
+            asset: responseAsset,
           }),
         }).catch((err: any) => {
           fastify.log.warn(`[Webhook] Failed to dispatch webhook to ${rawWebhookUrl}: ${err.message}`);
@@ -340,26 +316,7 @@ export async function uploadRoutes(fastify: FastifyInstance) {
       return reply.status(existing ? 200 : 201).send({
         success: true,
         overwritten: !!existing,
-        asset: {
-          public_id: record.publicId,
-          publicId: record.publicId,
-          filename: record.originalName,
-          format: record.format,
-          resource_type: record.resourceType,
-          resourceType: record.resourceType,
-          width: record.width,
-          height: record.height,
-          bytes: record.bytes,
-          storageDriver: record.storageDriver,
-          etag: record.etag,
-          access: record.access || 'public',
-          url: assetUrl,
-          secure_url: assetUrl,
-          secureUrl: assetUrl,
-          rawUrl,
-          created_at: record.createdAt,
-          createdAt: record.createdAt,
-        },
+        asset: responseAsset,
       });
     }
   );
