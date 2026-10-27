@@ -41,7 +41,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   // CORS for public web clients
   await server.register(cors, {
     origin: true, // Allow any origin for public media delivery
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: [
       'Content-Type',
       'Authorization',

@@ -60,7 +60,7 @@ export function parseTransformationParams(rawParams: string): TransformationPara
       const effect = trimmed.slice(2).toLowerCase();
       if (effect === 'grayscale' || effect === 'gray') {
         result.grayscale = true;
-      } else if (effect === 'sharpen') {
+      } else if (effect === 'sharpen' || effect === 'sharp') {
         result.sharpen = true;
       } else if (effect.startsWith('blur')) {
         const parts = effect.split('_');

@@ -38,9 +38,18 @@ class FilesStore {
     const dir = path.dirname(metaPath);
 
     await fs.promises.mkdir(dir, { recursive: true });
-    const tempPath = `${metaPath}.tmp-${Date.now()}`;
+    const tempPath = `${metaPath}.tmp-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     await fs.promises.writeFile(tempPath, JSON.stringify(record, null, 2), 'utf-8');
-    await fs.promises.rename(tempPath, metaPath);
+    try {
+      await fs.promises.rename(tempPath, metaPath);
+    } catch (err: any) {
+      if (err.code === 'EPERM' || err.code === 'EBUSY' || err.code === 'EEXIST' || err.code === 'EACCES') {
+        await fs.promises.copyFile(tempPath, metaPath);
+        await fs.promises.unlink(tempPath).catch(() => {});
+      } else {
+        throw err;
+      }
+    }
   }
 
   /**

@@ -42,9 +42,20 @@ class FoldersStore {
 
   private saveExplicitFolders(folders: FolderItem[]) {
     this.ensureDir();
-    const tempFile = `${this.filePath}.tmp-${Date.now()}`;
+    const tempFile = `${this.filePath}.tmp-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     fs.writeFileSync(tempFile, JSON.stringify(folders, null, 2), 'utf-8');
-    fs.renameSync(tempFile, this.filePath);
+    try {
+      fs.renameSync(tempFile, this.filePath);
+    } catch (err: any) {
+      if (err.code === 'EPERM' || err.code === 'EBUSY' || err.code === 'EEXIST' || err.code === 'EACCES') {
+        fs.copyFileSync(tempFile, this.filePath);
+        try {
+          fs.unlinkSync(tempFile);
+        } catch {}
+      } else {
+        throw err;
+      }
+    }
   }
 
   private sanitizeFolderPath(input: string): string {

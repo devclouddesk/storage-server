@@ -56,9 +56,20 @@ class KeysStore {
   private saveKeys(keys: ApiKeyRecord[]) {
     this.ensureDir();
     this.keysCache = keys;
-    const tempFile = `${this.filePath}.tmp-${Date.now()}`;
+    const tempFile = `${this.filePath}.tmp-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     fs.writeFileSync(tempFile, JSON.stringify(keys, null, 2), 'utf-8');
-    fs.renameSync(tempFile, this.filePath);
+    try {
+      fs.renameSync(tempFile, this.filePath);
+    } catch (err: any) {
+      if (err.code === 'EPERM' || err.code === 'EBUSY' || err.code === 'EEXIST' || err.code === 'EACCES') {
+        fs.copyFileSync(tempFile, this.filePath);
+        try {
+          fs.unlinkSync(tempFile);
+        } catch {}
+      } else {
+        throw err;
+      }
+    }
     try {
       this.lastMtime = fs.statSync(this.filePath).mtimeMs;
     } catch {}
